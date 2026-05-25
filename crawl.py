@@ -4,6 +4,7 @@ from typing import TypedDict
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
+import requests
 
 
 class PageData(TypedDict):
@@ -140,3 +141,24 @@ def extract_page_data(html: str, page_url: str) -> PageData:
         "outgoing_links": get_urls(soup, page_url),
         "image_urls": get_images(soup, page_url),
     }
+
+
+def get_html(url: str) -> str:
+    """Fetch the raw HTML content of a web page.
+
+    Args:
+        url: The URL of the web page to fetch.
+
+    Returns:
+        A string containing the raw HTML of the page.
+
+    Raises:
+        requests.RequestException: If an error occurs during the HTTP request.
+    """
+    response = requests.get(
+        url,
+        headers={"User-Agent": "BootCrawler/1.0"},
+        timeout=10,
+    )
+    response.raise_for_status()  # Raise an exception for HTTP errors
+    return response.text

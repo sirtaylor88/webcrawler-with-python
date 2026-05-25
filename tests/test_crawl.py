@@ -1,15 +1,42 @@
 """Tests for the crawl module's HTML parsing utilities."""
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+import requests as req
+
 from bs4 import BeautifulSoup
 
 from crawl import (
     extract_page_data,
     get_first_paragraph,
     get_heading,
+    get_html,
     get_images,
     get_urls,
     normalize_url,
 )
+
+
+def test_get_html_returns_text() -> None:
+    """Returns the response body text on a successful request."""
+    with patch("crawl.requests.get") as mock_get:
+        mock_response = MagicMock()
+        mock_response.text = "<html><body>Hello</body></html>"
+        mock_get.return_value = mock_response
+        result = get_html("https://example.com")
+    assert result == "<html><body>Hello</body></html>"
+    mock_response.raise_for_status.assert_called_once()
+
+
+def test_get_html_raises_on_http_error() -> None:
+    """Propagates an HTTP error raised by raise_for_status."""
+    with patch("crawl.requests.get") as mock_get:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = req.HTTPError("404")
+        mock_get.return_value = mock_response
+        with pytest.raises(req.HTTPError):
+            get_html("https://example.com/missing")
 
 
 def test_normalize_url() -> None:
