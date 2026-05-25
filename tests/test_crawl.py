@@ -8,6 +8,7 @@ import requests as req
 from bs4 import BeautifulSoup
 
 from crawl import (
+    PageData,
     extract_page_data,
     get_first_paragraph,
     get_heading,
@@ -16,6 +17,8 @@ from crawl import (
     get_urls,
     normalize_url,
 )
+
+BASE_URL = "https://crawler-test.com"
 
 
 def test_get_html_returns_text() -> None:
@@ -41,8 +44,7 @@ def test_get_html_raises_on_http_error() -> None:
 
 def test_normalize_url() -> None:
     """Strips scheme from a URL, keeping host and path."""
-    actual = normalize_url("https://www.boot.dev/blog/path")
-    assert actual == "www.boot.dev/blog/path"
+    assert normalize_url("https://www.boot.dev/blog/path") == "www.boot.dev/blog/path"
 
 
 def test_get_heading_basic() -> None:
@@ -51,213 +53,206 @@ def test_get_heading_basic() -> None:
     assert get_heading(soup) == "Test Title"
 
 
-def test_get_first_paragraph_main_priority() -> None:
-    """Prefers the first paragraph inside <main> over one outside it."""
-    html = """<html><body>
+@pytest.mark.parametrize(
+    "html,expected",
+    [
+        pytest.param(
+            """<html><body>
         <p>Outside paragraph.</p>
-        <main>
-            <p>Main paragraph.</p>
-        </main>
-    </body></html>"""
-    assert get_first_paragraph(BeautifulSoup(html, "html.parser")) == "Main paragraph."
+        <main><p>Main paragraph.</p></main>
+    </body></html>""",
+            "Main paragraph.",
+            id="prefers_main",
+        ),
+        pytest.param(
+            "<html><body><p>Outside paragraph.</p></body></html>",
+            "Outside paragraph.",
+            id="fallback_no_main",
+        ),
+    ],
+)
+def test_get_first_paragraph(html: str, expected: str) -> None:
+    """Extracts first paragraph with and without a <main> element."""
+    assert get_first_paragraph(BeautifulSoup(html, "html.parser")) == expected
 
 
-def test_get_first_paragraph_no_main() -> None:
-    """Falls back to the first paragraph in the document when no <main> exists."""
-    html = """<html><body>
-        <p>Outside paragraph.</p>
-    </body></html>"""
-    assert (
-        get_first_paragraph(BeautifulSoup(html, "html.parser")) == "Outside paragraph."
-    )
+@pytest.mark.parametrize(
+    "html,expected",
+    [
+        pytest.param(
+            '<html><body><a href="https://crawler-test.com">Boot.dev</a></body></html>',
+            ["https://crawler-test.com"],
+            id="absolute",
+        ),
+        pytest.param(
+            "<html><body><p>No links here.</p></body></html>",
+            [],
+            id="no_links",
+        ),
+    ],
+)
+def test_get_urls(html: str, expected: list[str]) -> None:
+    """Returns href values resolved against the base URL."""
+    assert get_urls(BeautifulSoup(html, "html.parser"), BASE_URL) == expected
 
 
-def test_get_urls_absolute() -> None:
-    """Returns absolute href values unchanged."""
-    base = "https://crawler-test.com"
-    html = '<html><body><a href="https://crawler-test.com"><span>Boot.dev</span></a></body></html>'
-    assert get_urls(BeautifulSoup(html, "html.parser"), base) == [
-        "https://crawler-test.com"
-    ]
+@pytest.mark.parametrize(
+    "html,expected",
+    [
+        pytest.param(
+            '<html><body><img src="/logo.png" alt="Logo"></body></html>',
+            ["https://crawler-test.com/logo.png"],
+            id="relative",
+        ),
+        pytest.param(
+            "<html><body><p>No images here.</p></body></html>",
+            [],
+            id="no_images",
+        ),
+        pytest.param(
+            '<html><body><img src="https://crawler-test.com/logo.png" alt="Logo"></body></html>',
+            ["https://crawler-test.com/logo.png"],
+            id="absolute",
+        ),
+        pytest.param(
+            '<html><body><img alt="No src"></body></html>',
+            [],
+            id="no_src",
+        ),
+    ],
+)
+def test_get_images(html: str, expected: list[str]) -> None:
+    """Returns image src values resolved against the base URL."""
+    assert get_images(BeautifulSoup(html, "html.parser"), BASE_URL) == expected
 
 
-def test_get_urls_no_links() -> None:
-    """Returns an empty list when the page has no anchor tags."""
-    base = "https://crawler-test.com"
-    html = "<html><body><p>No links here.</p></body></html>"
-    assert get_urls(BeautifulSoup(html, "html.parser"), base) == []
-
-
-def test_get_images_relative() -> None:
-    """Resolves relative src paths against the base URL."""
-    base = "https://crawler-test.com"
-    html = '<html><body><img src="/logo.png" alt="Logo"></body></html>'
-    assert get_images(BeautifulSoup(html, "html.parser"), base) == [
-        "https://crawler-test.com/logo.png"
-    ]
-
-
-def test_get_images_no_images() -> None:
-    """Returns an empty list when the page has no img tags."""
-    base = "https://crawler-test.com"
-    html = "<html><body><p>No images here.</p></body></html>"
-    assert get_images(BeautifulSoup(html, "html.parser"), base) == []
-
-
-def test_get_images_absolute() -> None:
-    """Returns absolute src values unchanged."""
-    base = "https://crawler-test.com"
-    html = '<html><body><img src="https://crawler-test.com/logo.png" alt="Logo"></body></html>'
-    assert get_images(BeautifulSoup(html, "html.parser"), base) == [
-        "https://crawler-test.com/logo.png"
-    ]
-
-
-def test_get_images_no_src() -> None:
-    """Ignores img tags that have no src attribute."""
-    base = "https://crawler-test.com"
-    html = '<html><body><img alt="No src"></body></html>'
-    assert get_images(BeautifulSoup(html, "html.parser"), base) == []
-
-
-def test_extract_page_data_basic() -> None:
-    """Extracts all fields from a well-formed page."""
-    url = "https://crawler-test.com"
-    html = """<html><body>
+@pytest.mark.parametrize(
+    "html,expected",
+    [
+        pytest.param(
+            """<html><body>
         <h1>Test Title</h1>
         <p>This is the first paragraph.</p>
         <a href="/link1">Link 1</a>
         <img src="/image1.jpg" alt="Image 1">
-    </body></html>"""
-    assert extract_page_data(html, url) == {
-        "url": url,
-        "heading": "Test Title",
-        "first_paragraph": "This is the first paragraph.",
-        "outgoing_links": ["https://crawler-test.com/link1"],
-        "image_urls": ["https://crawler-test.com/image1.jpg"],
-    }
-
-
-def test_extract_page_data_no_heading() -> None:
-    """Returns an empty string for heading when no h1/h2 is present."""
-    url = "https://crawler-test.com"
-    html = """<html><body>
+    </body></html>""",
+            PageData(
+                url=BASE_URL,
+                heading="Test Title",
+                first_paragraph="This is the first paragraph.",
+                outgoing_links=[f"{BASE_URL}/link1"],
+                image_urls=[f"{BASE_URL}/image1.jpg"],
+            ),
+            id="basic",
+        ),
+        pytest.param(
+            """<html><body>
         <p>This is the first paragraph.</p>
         <a href="/link1">Link 1</a>
         <img src="/image1.jpg" alt="Image 1">
-    </body></html>"""
-    assert extract_page_data(html, url) == {
-        "url": url,
-        "heading": "",
-        "first_paragraph": "This is the first paragraph.",
-        "outgoing_links": ["https://crawler-test.com/link1"],
-        "image_urls": ["https://crawler-test.com/image1.jpg"],
-    }
-
-
-def test_extract_page_data_no_paragraph() -> None:
-    """Returns an empty string for first_paragraph when no p tag is present."""
-    url = "https://crawler-test.com"
-    html = """<html><body>
+    </body></html>""",
+            PageData(
+                url=BASE_URL,
+                heading="",
+                first_paragraph="This is the first paragraph.",
+                outgoing_links=[f"{BASE_URL}/link1"],
+                image_urls=[f"{BASE_URL}/image1.jpg"],
+            ),
+            id="no_heading",
+        ),
+        pytest.param(
+            """<html><body>
         <h1>Test Title</h1>
         <a href="/link1">Link 1</a>
         <img src="/image1.jpg" alt="Image 1">
-    </body></html>"""
-    assert extract_page_data(html, url) == {
-        "url": url,
-        "heading": "Test Title",
-        "first_paragraph": "",
-        "outgoing_links": ["https://crawler-test.com/link1"],
-        "image_urls": ["https://crawler-test.com/image1.jpg"],
-    }
-
-
-def test_extract_page_data_no_links_or_images() -> None:
-    """Returns empty lists for outgoing_links and image_urls when none are present."""
-    url = "https://crawler-test.com"
-    html = """<html><body>
+    </body></html>""",
+            PageData(
+                url=BASE_URL,
+                heading="Test Title",
+                first_paragraph="",
+                outgoing_links=[f"{BASE_URL}/link1"],
+                image_urls=[f"{BASE_URL}/image1.jpg"],
+            ),
+            id="no_paragraph",
+        ),
+        pytest.param(
+            """<html><body>
         <h1>Test Title</h1>
         <p>This is the first paragraph.</p>
-    </body></html>"""
-    assert extract_page_data(html, url) == {
-        "url": url,
-        "heading": "Test Title",
-        "first_paragraph": "This is the first paragraph.",
-        "outgoing_links": [],
-        "image_urls": [],
-    }
-
-
-def test_extract_page_data_empty_html() -> None:
-    """Returns empty strings and lists for all fields when given empty HTML."""
-    url = "https://crawler-test.com"
-    assert extract_page_data("", url) == {
-        "url": url,
-        "heading": "",
-        "first_paragraph": "",
-        "outgoing_links": [],
-        "image_urls": [],
-    }
-
-
-def test_extract_page_data_no_main_paragraph() -> None:
-    """Falls back to a top-level p tag when <main> exists but contains no paragraph."""
-    url = "https://crawler-test.com"
-    html = """<html><body>
+    </body></html>""",
+            PageData(
+                url=BASE_URL,
+                heading="Test Title",
+                first_paragraph="This is the first paragraph.",
+                outgoing_links=[],
+                image_urls=[],
+            ),
+            id="no_links_or_images",
+        ),
+        pytest.param(
+            "",
+            PageData(
+                url=BASE_URL,
+                heading="",
+                first_paragraph="",
+                outgoing_links=[],
+                image_urls=[],
+            ),
+            id="empty_html",
+        ),
+        pytest.param(
+            """<html><body>
         <h1>Test Title</h1>
         <main></main>
         <p>This is the first paragraph.</p>
-    </body></html>"""
-    assert extract_page_data(html, url) == {
-        "url": url,
-        "heading": "Test Title",
-        "first_paragraph": "This is the first paragraph.",
-        "outgoing_links": [],
-        "image_urls": [],
-    }
-
-
-def test_extract_page_data_multiple_links_and_images() -> None:
-    """Collects all links and images in document order."""
-    url = "https://crawler-test.com"
-    html = """<html><body>
+    </body></html>""",
+            PageData(
+                url=BASE_URL,
+                heading="Test Title",
+                first_paragraph="This is the first paragraph.",
+                outgoing_links=[],
+                image_urls=[],
+            ),
+            id="no_main_paragraph",
+        ),
+        pytest.param(
+            """<html><body>
         <h1>Test Title</h1>
         <p>This is the first paragraph.</p>
         <a href="/link1">Link 1</a>
         <a href="/link2">Link 2</a>
         <img src="/image1.jpg" alt="Image 1">
         <img src="/image2.jpg" alt="Image 2">
-    </body></html>"""
-    assert extract_page_data(html, url) == {
-        "url": url,
-        "heading": "Test Title",
-        "first_paragraph": "This is the first paragraph.",
-        "outgoing_links": [
-            "https://crawler-test.com/link1",
-            "https://crawler-test.com/link2",
-        ],
-        "image_urls": [
-            "https://crawler-test.com/image1.jpg",
-            "https://crawler-test.com/image2.jpg",
-        ],
-    }
-
-
-def test_extract_page_data_nested_elements() -> None:
-    """Extracts data correctly when links and images are inside <main>."""
-    url = "https://crawler-test.com"
-    html = """<html><body>
+    </body></html>""",
+            PageData(
+                url=BASE_URL,
+                heading="Test Title",
+                first_paragraph="This is the first paragraph.",
+                outgoing_links=[f"{BASE_URL}/link1", f"{BASE_URL}/link2"],
+                image_urls=[f"{BASE_URL}/image1.jpg", f"{BASE_URL}/image2.jpg"],
+            ),
+            id="multiple_links_and_images",
+        ),
+        pytest.param(
+            """<html><body>
         <h1>Test Title</h1>
         <main>
             <p>This is the first paragraph.</p>
             <a href="/link1">Link 1</a>
             <img src="/image1.jpg" alt="Image 1">
         </main>
-    </body></html>"""
-    assert extract_page_data(html, url) == {
-        "url": url,
-        "heading": "Test Title",
-        "first_paragraph": "This is the first paragraph.",
-        "outgoing_links": ["https://crawler-test.com/link1"],
-        "image_urls": ["https://crawler-test.com/image1.jpg"],
-    }
+    </body></html>""",
+            PageData(
+                url=BASE_URL,
+                heading="Test Title",
+                first_paragraph="This is the first paragraph.",
+                outgoing_links=[f"{BASE_URL}/link1"],
+                image_urls=[f"{BASE_URL}/image1.jpg"],
+            ),
+            id="nested_in_main",
+        ),
+    ],
+)
+def test_extract_page_data(html: str, expected: PageData) -> None:
+    """Extracts all fields correctly across various page structures."""
+    assert extract_page_data(html, BASE_URL) == expected

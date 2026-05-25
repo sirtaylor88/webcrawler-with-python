@@ -16,6 +16,7 @@ skips = ["B101"]
 
 [tool.pylint.main]
 ignore-paths = ["docs"]
+source-roots = ["."]
 
 [tool.pylint.messages_control]
 disable = [
